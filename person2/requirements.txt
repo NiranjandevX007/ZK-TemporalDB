@@ -1,0 +1,7 @@
+# ZK-TemporalDB Person 2 — Python Dependencies
+# Install: pip install -r person2/requirements.txt
+
+psycopg2-binary>=2.9,<3       # PostgreSQL adapter
+pymongo>=4.6,<5               # MongoDB driver
+python-dotenv>=1.0,<2         # .env file loading
+pytest>=7.0,<9                # Test framework
