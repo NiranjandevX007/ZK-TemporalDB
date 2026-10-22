@@ -39,7 +39,7 @@ versioning layer and an application-layer anomaly detector.
 | 4 transaction examples with savepoints | ✅ Done |
 | 25+ demonstration SELECT queries | ✅ Done |
 | 13-section verification suite (`verify.sql`) | ✅ Done |
-| Cryptographic versioning layer (Person 2) | ⏳ Planned |
+| Cryptographic versioning layer (Person 2) | ✅ Implemented — validation in progress |
 | Application + AI anomaly detection (Person 3) | ⏳ Planned |
 
 ---
@@ -52,6 +52,8 @@ versioning layer and an application-layer anomaly detector.
 | Query language | SQL + PL/pgSQL |
 | Client | `psql` |
 | Version control | Git / GitHub |
+| Cryptographic versioning | Python · psycopg2 · pymongo · SHA-256 · Merkle trees |
+| Zero-knowledge proofs | Circom 2 · snarkjs · Groth16 (BN128) |
 
 No frameworks or external libraries — pure SQL and PL/pgSQL throughout.
 
@@ -95,7 +97,18 @@ ZK-TemporalDB/
 ├── verify.sql                  # 13-section automated test suite
 ├── migrate_v2.sql              # Historical migration — do NOT re-run
 ├── PERSON1_README.md           # Full setup guide and quick-reference commands
-└── PERSON1_VIVA_NOTES.md       # Design rationale and viva Q&A
+├── PERSON1_VIVA_NOTES.md       # Design rationale and viva Q&A
+└── person2/                    # Cryptographic versioning layer
+    ├── services.py             # AcademicRecordService — integration facade for Person 3
+    ├── versioning.py           # SHA-256 hash-chain versioning
+    ├── merkle.py               # Merkle tree batch verification
+    ├── zkp.py                  # Zero-knowledge proof service (Groth16 + fallback)
+    ├── canonical.py            # Deterministic JSON canonicalization
+    ├── circuits/               # Circom circuit + build artifacts
+    ├── requirements.txt        # Python dependencies
+    ├── package.json            # Node.js circuit toolchain (circom2 + snarkjs)
+    ├── API_CONTRACT.md         # Integration interface for Person 3
+    └── tests/                  # 86+ tests (unit + integration)
 ```
 
 ---
@@ -118,6 +131,28 @@ psql -d zk_temporaldb -f verify.sql
 ```
 
 `queries.sql` and `verify.sql` are read-only and safe to re-run at any time.
+
+### Person 2 — Python dependencies
+
+```bash
+pip install -r person2/requirements.txt
+```
+
+Copy `person2/.env.example` to `person2/.env` and fill in your PostgreSQL
+(and optionally MongoDB) connection strings before running tests.
+
+### Person 2 — Local Node.js circuit toolchain (optional)
+
+Required only for genuine Groth16 ZKP proofs.  If this step is skipped, the
+service automatically uses the commitment-based fallback.
+
+```bash
+# Install circom2 and snarkjs into person2/node_modules
+cd person2 && npm install
+
+# Compile the circuit and run the trusted setup (test-only ceremony)
+python3 -c "from person2.zkp import ZKPService; ZKPService().setup_circuit()"
+```
 
 ---
 
@@ -150,10 +185,18 @@ All schema, data, views, functions, procedures, trigger, indexes, queries, and
 verification listed above. See [PERSON1_README.md](PERSON1_README.md) and
 [PERSON1_VIVA_NOTES.md](PERSON1_VIVA_NOTES.md) for full detail.
 
-### Person 2 — Cryptographic Versioning ⏳ Planned
-SHA-256 hashing + Merkle-tree versioning of academic records. Will reference
-`student_id` and `(student_id, sem_no)` as identifiers — no changes needed to
-Person 1's tables.
+### Person 2 — Cryptographic Versioning ✅ Implemented
+
+SHA-256 hash-chain versioning of academic records, Merkle-tree batch proofs,
+and a zero-knowledge proof layer (Groth16 via Circom + snarkjs, with an
+honest commitment-based fallback when the toolchain is absent).  References
+`student_id` and `(student_id, sem_no)` as identifiers — no changes were made
+to Person 1's tables.  See [`person2/API_CONTRACT.md`](person2/API_CONTRACT.md)
+for the integration interface.
+
+> **Validation status:** The core cryptographic modules pass 86+ automated tests.
+> End-to-end snarkjs verification and a live PostgreSQL integration have been
+> tested locally.  Review is ongoing.
 
 ### Person 3 — Application and AI Anomaly Detection ⏳ Planned
 Application layer reading through Person 1's views (`vw_student_performance_summary`,
@@ -170,7 +213,8 @@ to flag suspicious grade or result changes.
 - `fn_grade_to_point` uses an illustrative grading scale, not an official policy.
 - Foreign keys have no `ON DELETE` rule; child rows must be removed manually
   before deleting a parent.
-- Persons 2 and 3 components are not yet in this repository.
+- The Groth16 trusted setup uses a single test-only "powers of tau" ceremony;
+  production use would require a multi-party ceremony.
 
 ---
 

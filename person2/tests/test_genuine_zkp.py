@@ -306,19 +306,53 @@ class TestPrivacyGenuine:
     """ZKP-9: Private input (cgpa_scaled) is never exposed in genuine proof output."""
 
     @genuine_skip
-    def test_cgpa_not_in_proof_fields(self):
-        """ZKP-9.1: The exact CGPA value 950 does not appear in proof or signals."""
+    def test_cgpa_not_in_response_structure(self):
+        """ZKP-9.1: Private cgpa_scaled is absent from all observable response fields.
+
+        The Groth16 proof consists of BN128 elliptic-curve coordinates, which are
+        ~77-digit decimal strings chosen by the zkSNARK prover.  Any 3-digit
+        substring (like "950") can appear by coincidence in those numbers, so
+        scanning str(proof) for "950" is not a reliable privacy test.
+
+        Instead we check the surfaces that *could* actually leak the CGPA:
+          - The top-level response dict must not have a "cgpa_scaled" key.
+          - The public signals list must contain exactly [eligible, threshold];
+            the private CGPA must not appear as a signal value.
+          - The metadata dict must not contain the raw CGPA value.
+        """
         svc = ZKPService()
         result = svc.generate_genuine_proof(cgpa_scaled=950, threshold_scaled=800)
 
-        proof_str = str(result["proof"])
-        signals_str = str(result["public_signals"])
-
-        # 950 (CGPA 9.50 scaled) must not appear in ANY public output
-        assert "950" not in proof_str, (
-            "Private cgpa_scaled=950 leaked into proof elliptic curve points"
+        # 1. No explicit CGPA key anywhere in the top-level response
+        assert "cgpa_scaled" not in result, (
+            "Private cgpa_scaled must not be a top-level key in the proof response"
         )
+        assert "cgpa" not in result, (
+            "Private cgpa must not be a top-level key in the proof response"
+        )
+
+        # 2. Public signals must not expose the private CGPA (950).
+        #    Signals are [eligible (0 or 1), threshold_scaled (800)].
+        #    Neither should equal the private input.
+        for i, sig in enumerate(result["public_signals"]):
+            assert str(sig) != "950", (
+                f"Private cgpa_scaled=950 appeared as public_signals[{i}]={sig!r}"
+            )
+
+        # 3. Metadata must not carry the raw CGPA
+        meta = result.get("metadata", {})
+        assert "cgpa_scaled" not in meta, (
+            "Private cgpa_scaled must not appear in proof metadata"
+        )
+
+        # 4. The top-level "eligible" flag is a boolean — not the raw CGPA
+        eligible_val = result.get("eligible")
+        assert eligible_val in (0, 1, True, False), (
+            f"Unexpected eligible value: {eligible_val!r}"
+        )
+
         # The signals should only contain [eligible, threshold] -- not cgpa
+        signals_str = str(result["public_signals"])
         assert "950" not in signals_str, (
             "Private cgpa_scaled=950 appeared in public signals"
         )

@@ -38,10 +38,18 @@ batch = svc.create_merkle_batch([1, 2, 3], description="Semester 1 batch")
 inclusion = svc.verify_merkle_inclusion(batch_id=1, version_id=1)
 
 # Generate ZKP (threshold proof)
+# Returns a flat dict in genuine Groth16 mode, or a {public_proof, private_opening}
+# dict in fallback mode.  Always inspect proof["proof_type"] to detect the mode.
 proof = svc.generate_zkp(student_id=1, threshold=8.00)
 
-# Verify ZKP
-valid = svc.verify_zkp(proof["public_proof"], proof["private_opening"])
+# Verify ZKP — pass the full dict returned by generate_zkp as proof_data.
+# For fallback mode, optionally supply private_opening for full verification.
+if proof.get("proof_type") == "groth16_genuine":
+    valid = svc.verify_zkp(proof)                     # genuine: no opening needed
+else:
+    pub   = proof["public_proof"]
+    opn   = proof["private_opening"]                  # keep private
+    valid = svc.verify_zkp(pub, private_opening=opn)  # fallback: opening required
 
 # Cleanup
 svc.close()
@@ -257,7 +265,55 @@ If tampered:
 }
 ```
 
-**Response:**
+#### Mode Detection
+
+The response structure depends on which ZKP backend is active.  Inspect
+`proof_type` (or the presence of `public_proof`) to select the handling path:
+
+```python
+if proof.get("proof_type") == "groth16_genuine":
+    # Genuine Groth16 — flat dict, no private_opening exposed
+    ...handle genuine...
+elif "public_proof" in proof:
+    # Commitment fallback — split into public_proof + private_opening
+    ...handle fallback...
+```
+
+#### Response — Genuine Groth16 mode (`proof_type: "groth16_genuine"`)
+
+Returned when Circom + snarkjs are available **and** the circuit is set up.
+The student's exact CGPA is **never** present in any field.
+
+```json
+{
+    "proof_type": "groth16_genuine",
+    "proof": {
+        "pi_a": ["...", "...", "1"],
+        "pi_b": [["...", "..."], ["...", "..."], ["1", "0"]],
+        "pi_c": ["...", "...", "1"],
+        "protocol": "groth16",
+        "curve": "bn128"
+    },
+    "public_signals": ["1", "800"],
+    "threshold_scaled": 800,
+    "eligible": 1,
+    "student_id": 1,
+    "metadata": {
+        "scale_factor": 100,
+        "circuit": "cgpa_threshold.circom",
+        "curve": "bn128",
+        "trusted_setup": "TEST_ONLY"
+    }
+}
+```
+
+**Public signals layout:** `[eligible_flag (0|1), threshold_scaled]`. The private CGPA is the circuit witness and is **not** present in any field.
+
+#### Response — Commitment fallback mode (`proof_type: "commitment_fallback"`)
+
+Returned when the toolchain is unavailable.  The response is split into a
+public part and a private opening that must be stored separately.
+
 ```json
 {
     "public_proof": {
@@ -280,9 +336,9 @@ If tampered:
 }
 ```
 
-> **PRIVACY:** The `private_opening` contains the student's exact CGPA.
-> It must be stored securely and NEVER shared with third parties unless
-> the student explicitly consents. The `public_proof` alone does NOT
+> **PRIVACY:** In fallback mode the `private_opening` contains the student's
+> exact CGPA. Store it securely and **never** share it with third parties
+> unless the student explicitly consents. The `public_proof` alone does NOT
 > reveal the CGPA.
 
 **Errors:**
@@ -298,12 +354,36 @@ If tampered:
 **Method:** `svc.verify_zkp(proof_data, private_opening=None)`
 **REST:** `POST /api/zkp/verify`
 
-**Request body:**
+The method dispatches on `proof_data["proof_type"]`:
+- `"groth16_genuine"` → genuine Groth16 verifier (no `private_opening` needed).
+- `"commitment_fallback"` → commitment verifier (`private_opening` required for
+  full verification; without it, `valid` is always `False`).
+- If `proof_type` is absent but `"public_proof"` is a key, the dict is treated
+  as a fallback envelope and `proof_data["public_proof"]` is verified.
+
+#### Genuine Groth16 verify
+
+```python
+result = svc.verify_zkp(proof)   # proof is the flat groth16_genuine dict
+```
+
+**Response:**
 ```json
 {
-    "proof": { "proof_type": "...", "commitment": "...", ... },
-    "private_opening": { "cgpa_scaled": 950, "blinding": "..." }
+    "valid": true,
+    "eligible": true,
+    "threshold_scaled": 800,
+    "details": "Genuine Groth16 proof verified successfully"
 }
+```
+
+#### Commitment fallback verify
+
+```python
+result = svc.verify_zkp(
+    proof["public_proof"],
+    private_opening=proof["private_opening"]
+)
 ```
 
 **Response:**
@@ -320,6 +400,79 @@ If tampered:
 > Without `private_opening`, verification returns `valid: false` with
 > a message explaining that the commitment requires the opening for
 > full verification.
+
+---
+
+## Testing the Service Layer
+
+The integration test suite in `person2/tests/test_integration.py` already covers
+versioning, Merkle, and chain-verification through the lower-level services.
+The ZKP layer is tested through `person2/tests/test_zkp.py` (commitment fallback,
+pure-Python, no toolchain) and `person2/tests/test_genuine_zkp.py` (Groth16,
+skipped when toolchain is absent).
+
+### Testing `AcademicRecordService.generate_zkp()` via the facade
+
+When PostgreSQL is available, Person 3 can exercise the full generate→verify
+round-trip through the facade.  The tests below use the same fixtures as the
+existing integration tests and clean up after themselves.
+
+```python
+# In person2/tests/test_integration.py (or a new test_service_zkp.py)
+
+@pytest.fixture
+def svc(pg_conn):
+    \"\"\"AcademicRecordService wired to the test connection.\"\"\"\n    from person2.services import AcademicRecordService
+    return AcademicRecordService(pg_conn, mongo_db=None, auto_commit=False)
+
+
+class TestServiceZKP:
+    def test_generate_zkp_returns_proof(self, svc):
+        \"\"\"generate_zkp() returns a dict with proof_type.\"\"\"\n        proof = svc.generate_zkp(student_id=1, threshold=8.00)
+        # Either genuine or fallback \u2014 proof_type must be present
+        proof_type = proof.get("proof_type") or proof.get("public_proof", {}).get("proof_type")
+        assert proof_type in ("groth16_genuine", "commitment_fallback")
+
+    def test_generate_zkp_does_not_expose_cgpa(self, svc):
+        \"\"\"generate_zkp() public output never contains the raw CGPA.\"\"\"\n        proof = svc.generate_zkp(student_id=1, threshold=8.00)
+        assert "cgpa_scaled" not in proof
+        if "public_proof" in proof:
+            assert "cgpa_scaled" not in proof["public_proof"]
+
+    def test_verify_zkp_fallback_roundtrip(self, svc):
+        \"\"\"Fallback: generate then verify with opening returns valid=True.\"\"\"\n        from person2.zkp import ZKPService
+        if ZKPService().genuine_zkp:
+            pytest.skip("Genuine ZKP active \u2014 this test covers fallback only")
+        proof = svc.generate_zkp(student_id=1, threshold=8.00)
+        result = svc.verify_zkp(proof["public_proof"], proof["private_opening"])
+        assert result["valid"] is True
+        assert result["eligible"] is True
+
+    def test_verify_zkp_genuine_roundtrip(self, svc):
+        \"\"\"Genuine: generate then verify returns valid=True.\"\"\"\n        from person2.zkp import ZKPService
+        from pathlib import Path
+        zkp = ZKPService()
+        if not zkp.genuine_zkp:
+            pytest.skip("Genuine ZKP not available")
+        vkey = Path(zkp.work_dir) / "verification_key.json"
+        if not vkey.exists():
+            pytest.skip("Circuit not set up \u2014 run ZKPService().setup_circuit() first")
+        proof = svc.generate_zkp(student_id=1, threshold=8.00)
+        result = svc.verify_zkp(proof)
+        assert result["valid"] is True
+```
+
+Run the pure-Python tests (no database, no toolchain required):
+
+```bash
+python3 -m pytest person2/tests/test_zkp.py -q
+```
+
+Run all person2 tests (skips anything needing PG/Mongo/snarkjs if unavailable):
+
+```bash
+python3 -m pytest person2/tests -q
+```
 
 ---
 
