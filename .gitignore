@@ -48,6 +48,8 @@ dumps/
 .env
 .env.*
 *.env
+!.env.example
+!**/.env.example
 .pgpass
 pgpass
 .netrc
@@ -76,6 +78,7 @@ config/local.json
 __pycache__/
 *.py[cod]
 *.pyo
+.pytest_cache/
 venv/
 .venv/
 env/
@@ -83,7 +86,11 @@ env/
 
 # ── Node / npm (if any tooling is added later) ────────────────────────────────
 node_modules/
+person2/node_modules/
 npm-debug.log*
+
+# ── Person 2 ZKP circuits & artifacts ─────────────────────────────────────────
+person2/circuits/build/
 
 # ── Logs and temp files ───────────────────────────────────────────────────────
 *.log
