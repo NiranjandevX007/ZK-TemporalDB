@@ -1,0 +1,93 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# ZK-TemporalDB — .gitignore
+# Excludes macOS system files, credentials, database dumps, and temp files.
+# SQL source files (*.sql) are NEVER excluded.
+# ──────────────────────────────────────────────────────────────────────────────
+
+# ── macOS system files ────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+.AppleDouble
+.LSOverride
+Icon
+.DocumentRevisions-V100
+.fseventsd
+.TemporaryItems
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# ── PostgreSQL data directories (never upload raw cluster data) ───────────────
+/var/lib/postgresql/
+/usr/local/var/postgres/
+pg_data/
+pgdata/
+*.pgdata
+
+# ── Database dump / backup files ──────────────────────────────────────────────
+*.dump
+*.sql.gz
+*.sql.bz2
+*.pg_dump
+*.backup
+*.bak
+db_backup/
+backups/
+dumps/
+
+# ── Environment / credentials ─────────────────────────────────────────────────
+.env
+.env.*
+*.env
+.pgpass
+pgpass
+.netrc
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+secrets/
+credentials/
+config/local.py
+config/local.js
+config/local.json
+
+# ── Editor / IDE files ────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+*.orig
+\#*\#
+.#*
+
+# ── Python / virtualenv (if any scripts are added later) ─────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+venv/
+.venv/
+env/
+*.egg-info/
+
+# ── Node / npm (if any tooling is added later) ────────────────────────────────
+node_modules/
+npm-debug.log*
+
+# ── Logs and temp files ───────────────────────────────────────────────────────
+*.log
+*.tmp
+*.temp
+tmp/
+temp/
